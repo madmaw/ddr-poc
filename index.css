@@ -1,0 +1,23 @@
+.imageAndCanvasContainer {
+  position: relative;
+}
+
+#imageContainer img, #imageContainer, #imageCanvas, #videoCanvas, #video {
+  position: absolute;
+}
+
+#imageContainer, #imageCanvas, .imageAndCanvasContainer, .videoContainer, #video, #videoCanvas {
+  width: 640px;
+  height: 480px;
+}
+
+.videoContainer {
+  top: 0;
+  right: 0;
+  position: fixed;
+}
+
+#video {
+  transform: scaleX(-1);
+}
+
