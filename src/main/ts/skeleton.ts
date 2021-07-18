@@ -90,6 +90,7 @@ export function flipPose(pose: Pose): Pose {
 }
 
 export function buildSkeletonFromPose(pose: Pose, minScore = .8): Skeleton | undefined {
+  console.log(pose);
   const keypoints = new Map<Part, Keypoint>(
     pose.keypoints.map(keypoint => keypoint.score >= minScore
         ? [keypoint.part as Part, keypoint] as const
@@ -119,6 +120,34 @@ export function buildSkeletonFromPose(pose: Pose, minScore = .8): Skeleton | und
 
 export function compareSkeltons(referenceSkeleton: Skeleton, comparisonSkeleton: Skeleton, scores?: Map<Part, number>): number {
   return compareSkeletonParts(referenceSkeleton, comparisonSkeleton, skeletonTemplate, 1, scores);
+}
+
+export function drawSkeleton(ctx: CanvasRenderingContext2D, skeleton: Skeleton, scores?: Map<Part, number>) {
+  const score = scores?.get(skeleton.value.keypoint.part as Part) || 1;
+  ctx.globalAlpha = score;
+  ctx.beginPath();
+  ctx.arc(skeleton.value.keypoint.position.x, skeleton.value.keypoint.position.y, 3, 0, Math.PI*2);
+  ctx.fill();
+
+  //ctx.font = '20px sans-serif';
+  // ctx.fillText(
+  //     `${Math.floor(skeleton.value.angleRelativeToParent * 180/Math.PI)} ${skeleton.value.keypoint.part}`,
+  //     skeleton.value.keypoint.position.x,
+  //     skeleton.value.keypoint.position.y,
+  // );
+
+
+  for (const child of skeleton.getChildren()) {
+    const score = scores?.get(child.value.keypoint.part as Part) || 1;
+    ctx.globalAlpha = score;
+
+    ctx.beginPath();
+    ctx.moveTo(skeleton.value.keypoint.position.x, skeleton.value.keypoint.position.y);
+    ctx.lineTo(child.value.keypoint.position.x, child.value.keypoint.position.y);
+    ctx.stroke();
+    drawSkeleton(ctx, child, scores);
+  }
+  ctx.globalAlpha = 1;
 }
 
 function compareSkeletonParts(referenceSkeleton: Skeleton, comparisonSkeleton: Skeleton, template: SkeletonTemplate, multiplier: number, scores?: Map<Part, number>): number {
