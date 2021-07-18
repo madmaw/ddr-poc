@@ -1,7 +1,7 @@
 import { Keypoint, Pose } from '@tensorflow-models/posenet';
 import { Tree } from './tree';
 
-function exists<T>(value: T | undefined | null): value is T {
+export function exists<T>(value: T | undefined | null): value is T {
   return value != null;
 }
 

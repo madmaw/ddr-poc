@@ -2,14 +2,16 @@ import * as disintegrate from 'disintegrate';
 import * as posenet from '@tensorflow-models/posenet';
 // force the webgl backend to load
 import '@tensorflow/tfjs-backend-webgl';
-import { buildSkeletonFromPose, compareSkeltons, flipPose, Part, Skeleton } from './skeleton';
+import { buildSkeletonFromPose, compareSkeltons, exists, flipPose, Part, Skeleton } from './skeleton';
 
 disintegrate.init()
 
-type ImageAndPose = {
+type ImageAndPoses = {
   image: HTMLImageElement,
-  pose: posenet.Pose,
-  skeleton: Skeleton | undefined,
+  poses: Map<number, {
+    pose: posenet.Pose,
+    skeleton: Skeleton,
+  }>,
 };
 
 var C2 = 0+12*2, c2 = 1+12*2, D2 = 2+12*2, d2 = 3+12*2, E2 = 4+12*2, F2 = 5+12*2, f2 = 6+12*2, G2 = 7+12*2, g2 = 8+12*2, A2 = 9+12*2, a2 = 10+12*2, B2 = 11+12*2;
@@ -24,6 +26,8 @@ const imageURLs = [
   'egypt.jpg',
   'chin.jpg',
   'ballerina.jpg',
+  'travolta.jpeg',
+  'multiple.jpg',
 ];
 
 window.onload = () => {
@@ -47,7 +51,7 @@ window.onload = () => {
     pitch: number,
     duration: (N: number) => number,
   }[][];
-  let imagesAndPoses: ImageAndPose[];
+  let imagesAndPoses: ImageAndPoses[];
   let net: posenet.PoseNet;
 
   function stop() {
@@ -108,7 +112,7 @@ window.onload = () => {
   }
 
   function start() {
-    let previousImageAndPose: ImageAndPose | undefined;
+    let previousImageAndPoses: ImageAndPoses | undefined;
     let bpm = 110;
     if (startHandle) {
       console.log('started already');
@@ -131,31 +135,37 @@ window.onload = () => {
 
       let previousEndTimeSeconds = ac!.currentTime + 0.1;
       let section = 0;
-      let bestScore = 0;
+      let bestScores: Map<number, number> = new Map();
       let layers = 0;
 
       const nextImage = () => {
-        if (bestScore > .75 || !previousImageAndPose) {
+        const bestScore = previousImageAndPoses
+            ? [previousImageAndPoses.poses.values()].reduce((val, _, i) => {
+              const score = bestScores.get(i) || 0;
+              return Math.min(val, score)
+            }, 1)
+            : 0;
+        if (bestScore > .75 || !previousImageAndPoses) {
           if (layers + 1 < levelMods.length && section%levelMods[layers + 1] === 0) {
             layers++;
           }
           bpm++;
 
           const imageAndPose = imagesAndPoses[Math.floor(Math.random()*imagesAndPoses.length)];
-          if (previousImageAndPose) {
-            const disObj = disintegrate.getDisObj(previousImageAndPose.image);
+          if (previousImageAndPoses) {
+            const disObj = disintegrate.getDisObj(previousImageAndPoses.image);
             if (disObj) {
               disintegrate.createSimultaneousParticles(disObj);
             }
-            previousImageAndPose.image.hidden = true;
+            previousImageAndPoses.image.hidden = true;
           }
           imageAndPose.image.hidden = false;
-          previousImageAndPose = imageAndPose;  
+          previousImageAndPoses = imageAndPose;  
         } else {
           bpm = Math.max(110, bpm - 1);
           layers = Math.max(0, layers - 1);
         }
-        bestScore = 0;
+        bestScores = new Map();
       }
     
       const tick = () => {
@@ -175,23 +185,34 @@ window.onload = () => {
         const beatLen = N / 4;
         const beatProgress = 1 - ((previousEndTimeSeconds - ac!.currentTime)%beatLen)/beatLen
         const sectionProgress = 1 - ((previousEndTimeSeconds - ac!.currentTime - beatLen + N)%N)/N;
-        const style = `hsl(${sectionProgress*60}, 100%, ${50 + beatProgress * 50}%)`;
+        const style = `hsl(${sectionProgress*60}, 100%, ${40 + beatProgress * 40}%)`;
         //const style = `red`;
         const lineWidth = sectionProgress * sectionProgress * 5 + beatProgress * beatProgress;
-        if (previousImageAndPose) {
+        if (previousImageAndPoses) {
           imageCtx.clearRect(0, 0, imageCanvasElement.width, imageCanvasElement.height);
           imageCtx.strokeStyle = style;
           imageCtx.fillStyle = style;
           imageCtx.lineWidth = lineWidth;
-          imageCtx.strokeRect(lineWidth/2, lineWidth/2, previousImageAndPose.image.width - lineWidth, previousImageAndPose.image.height - lineWidth);
+          imageCtx.strokeRect(
+              lineWidth/2,
+              lineWidth/2,
+              previousImageAndPoses.image.width - lineWidth,
+              previousImageAndPoses.image.height - lineWidth,
+          );
           //drawPose(imageCtx, previousImageAndPose.pose);
-          if (previousImageAndPose.skeleton) {
-            drawSkeleton(imageCtx, previousImageAndPose.skeleton);
-          }
+          previousImageAndPoses.poses.forEach((pose, i) => {
+            if (pose.skeleton) {
+              const bestScore = bestScores.get(i) || 0;
+              const style = `hsl(${bestScore*bestScore*120}, 100%, ${40 + beatProgress * 40}%)`;
+              imageCtx.strokeStyle = style;
+              drawSkeleton(imageCtx, pose.skeleton);
+            }  
+          })
         }
-        const pose = flipPose(await net.estimateSinglePose(videoElement, {
+        const poses = (await net.estimateMultiplePoses(videoElement, {
           flipHorizontal: true,
-        }));
+          maxDetections: 3,
+        })).map(flipPose);
 
         videoCtx.strokeStyle = style;
         videoCtx.fillStyle = style;
@@ -201,19 +222,26 @@ window.onload = () => {
         videoCtx.scale(-1, 1);
         videoCtx.drawImage(videoElement, 0, 0);
         videoCtx.restore();
-        const skeleton = buildSkeletonFromPose(pose);
-        if (skeleton) {
-          const scores = new Map<Part, number>();
-          if (previousImageAndPose?.skeleton) {
-            const score = compareSkeltons(previousImageAndPose.skeleton, skeleton, scores);
-            bestScore = Math.max(bestScore, score);
-            videoCtx.textAlign = 'center';
-            videoCtx.fillStyle = `hsl(${score*120}, 100%, 50%)`;
-            videoCtx.font = '120px sans-serif';
-            videoCtx.fillText(`${Math.floor(score * 100)}%`, videoCanvasElement.width/2, videoCanvasElement.height/2);
-          }
-          drawSkeleton(videoCtx, skeleton, scores);
-        }
+        poses.forEach(pose => {
+          const skeleton = buildSkeletonFromPose(pose);
+          if (skeleton) {
+            previousImageAndPoses?.poses.forEach((previousPose, i) => {
+              const scores = new Map<Part, number>();
+              if (previousPose.skeleton) {
+                const score = compareSkeltons(previousPose.skeleton, skeleton, scores);
+                const existingBestScore = bestScores.get(i);
+                if (existingBestScore == null || existingBestScore < score) {
+                  bestScores.set(i, score);
+                }
+                // videoCtx.textAlign = 'center';
+                // videoCtx.fillStyle = `hsl(${score*120}, 100%, 50%)`;
+                // videoCtx.font = '120px sans-serif';
+                // videoCtx.fillText(`${Math.floor(score * 100)}%`, videoCanvasElement.width/2, videoCanvasElement.height/2);
+              }
+              drawSkeleton(videoCtx, skeleton, scores);
+            });
+          }  
+        });
 
         if (startHandle) {
           requestAnimationFrame(draw);
@@ -232,6 +260,7 @@ window.onload = () => {
       start();        
     } catch (e) {
       console.log('something bad happened', e);
+      throw e;
     }
   });
   stopElement?.addEventListener('click', stop);
@@ -287,7 +316,7 @@ window.onload = () => {
       containerElement?.appendChild(image);
       return image;      
     });
-    imagesAndPoses = await Promise.all(images.map(image => new Promise<ImageAndPose>((resolve, reject) => {
+    imagesAndPoses = await Promise.all(images.map(image => new Promise<ImageAndPoses>((resolve, reject) => {
       image.onload = async () => {
         const containerWidth = containerElement?.offsetWidth || 1;
         const containerHeight = containerElement?.offsetHeight || 1;
@@ -310,13 +339,19 @@ window.onload = () => {
         image.setAttribute('data-dis-reduction-factor', `${Math.floor(area/1000)}`);  
 
         try {
-          const pose = await net.estimateSinglePose(image);
-          const skeleton = buildSkeletonFromPose(pose);
+          const poses = await net.estimateMultiplePoses(image);
           resolve({
             image,
-            pose,
-            skeleton,
-          });  
+            poses: new Map(poses.map((pose, i) => {
+              const skeleton = buildSkeletonFromPose(pose);
+              return skeleton
+                  ? [i, {
+                    pose,
+                    skeleton,
+                  }] as const
+                  : undefined;
+            }).filter(exists)),
+          });
         } catch (e) {
           reject(e);
         }
